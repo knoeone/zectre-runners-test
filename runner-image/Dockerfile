@@ -26,6 +26,8 @@ RUN chmod 755 /usr/local/bin/git /usr/local/bin/zectre-cache-env && apt-get upda
 # tenant's /cache volume. Rebuild its sqlite addon for this image's glibc Node, and rename the
 # runner's own ACTIONS_RESULTS_URL so the container's value (pointing at localhost) reaches steps.
 COPY --from=cacheserver /app /opt/cache-server
+COPY node-wrap /usr/local/lib/zectre-node-wrap
+RUN for n in /home/runner/externals/node*/bin/node; do mv "$n" "$n.real" && install -m755 /usr/local/lib/zectre-node-wrap "$n"; done && ls /home/runner/externals/*/bin/
 RUN cd /tmp && npm i -s --no-save better-sqlite3@$(node -p "require('/opt/cache-server/server/node_modules/better-sqlite3/package.json').version") \
  && rm -rf /opt/cache-server/server/node_modules/better-sqlite3/build && cp -r node_modules/better-sqlite3/build /opt/cache-server/server/node_modules/better-sqlite3/ \
  && rm -rf /tmp/node_modules /root/.npm \
