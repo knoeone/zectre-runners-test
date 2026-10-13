@@ -1,0 +1,34 @@
+name: isolation-probe
+on:
+  workflow_dispatch:
+jobs:
+  probe:
+    runs-on: [self-hosted, zectre]
+    steps:
+      - name: Leaks from earlier jobs
+        run: |
+          # Every job writes a marker; a reused container or workspace would still have it.
+          for f in /tmp/zectre-marker "$HOME/zectre-marker" "$GITHUB_WORKSPACE/../zectre-marker"; do
+            if [ -e "$f" ]; then echo "LEAK: $f from $(cat "$f")"; exit 1; fi
+          done
+          echo "no leftovers"
+          for f in /tmp/zectre-marker "$HOME/zectre-marker" "$GITHUB_WORKSPACE/../zectre-marker"; do echo "$GITHUB_RUN_ID" > "$f"; done
+      - name: Resource limits
+        run: |
+          echo "cpu.max=$(cat /sys/fs/cgroup/cpu.max)  memory.max=$(cat /sys/fs/cgroup/memory.max)  memory.swap.max=$(cat /sys/fs/cgroup/memory.swap.max 2>/dev/null)  pids.max=$(cat /sys/fs/cgroup/pids.max)"
+          [ "$(cut -d' ' -f1 /sys/fs/cgroup/cpu.max)" != max ] || { echo "NO CPU LIMIT"; exit 1; }
+          [ "$(cat /sys/fs/cgroup/memory.max)" != max ] || { echo "NO MEMORY LIMIT"; exit 1; }
+      - name: Network isolation
+        run: |
+          fail=0
+          probe() { if curl -s -m 4 -o /dev/null "$2"; then echo "REACHABLE (bad): $1 $2"; fail=1; else echo "blocked: $1"; fi; }
+          gw=$(ip route 2>/dev/null | awk '/default/{print $3}'); gw=${gw:-$(awk '$2=="00000000"{h=$3; printf "%d.%d.%d.%d\n","0x"substr(h,7,2),"0x"substr(h,5,2),"0x"substr(h,3,2),"0x"substr(h,1,2)}' /proc/net/route | head -1)}
+          probe "cloud metadata" http://169.254.169.254/metadata/v1/id
+          probe "node via bridge gateway (API)" "http://$gw:47080/health"
+          probe "node via bridge gateway (scheduler)" "http://$gw:9091/health"
+          for ip in 10.124.0.2 10.124.0.3 10.124.0.4 10.124.0.5; do probe "VPC $ip" "http://$ip:47080/health"; done
+          curl -fsS -m 10 -o /dev/null https://github.com && echo "internet: ok"
+          exit $fail
+      - name: Privilege escalation
+        run: |
+          if sudo -n true 2>/dev/null; then echo "sudo works (no-new-privileges NOT enforced)"; exit 1; else echo "sudo blocked (no-new-privileges)"; fi
