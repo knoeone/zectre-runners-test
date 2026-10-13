@@ -1,0 +1,136 @@
+name: runner-bench-zectre
+on:
+  workflow_dispatch:
+jobs:
+  bench:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - provider: zectre
+            runs_on: '["self-hosted","zectre"]'
+    runs-on: ${{ fromJSON(matrix.runs_on) }}
+    name: bench-${{ matrix.provider }}
+    env:
+      OUT: ${{ github.workspace }}/bench.jsonl
+    steps:
+      - name: System info
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE"
+          echo "provider=${{ matrix.provider }} runner=$RUNNER_NAME"
+          uname -r; nproc; free -m; df -h . | tail -1
+          grep -m1 "model name" /proc/cpuinfo || true
+          echo "cgroup cpu.max: $(cat /sys/fs/cgroup/cpu.max 2>/dev/null || echo n/a)"
+          echo "cgroup memory.max: $(cat /sys/fs/cgroup/memory.max 2>/dev/null || echo n/a)"
+          printf '{"k":"sys","provider":"%s","nproc":%s,"mem_mb":%s,"cpu":"%s","cpu_max":"%s","mem_max":"%s"}\n' \
+            "${{ matrix.provider }}" "$(nproc)" "$(free -m | awk '/Mem:/{print $2}')" \
+            "$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs)" \
+            "$(cat /sys/fs/cgroup/cpu.max 2>/dev/null || echo n/a)" "$(cat /sys/fs/cgroup/memory.max 2>/dev/null || echo n/a)" > "$OUT"
+      - name: Timer helper
+        run: |
+          cat > /tmp/m.sh <<'SH'
+          # m <name> <cmd...>: wall, user+sys CPU, effective cores used (cpu/wall), cgroup throttling delta.
+          m() {
+            local name=$1; shift
+            local th0=$(awk '/^throttled_usec/{print $2}' /sys/fs/cgroup/cpu.stat 2>/dev/null || echo 0)
+            local TIMEFORMAT='%R %U %S'
+            { time "$@" >/tmp/m.log 2>&1; } 2>/tmp/m.t || { echo "FAILED: $name"; tail -30 /tmp/m.log; printf '{"k":"%s","failed":true}\n' "$name" >> "$OUT"; return 1; }
+            read R U S < /tmp/m.t
+            local th1=$(awk '/^throttled_usec/{print $2}' /sys/fs/cgroup/cpu.stat 2>/dev/null || echo 0)
+            local line=$(awk -v n="$name" -v r="$R" -v u="$U" -v s="$S" -v t=$(( ${th1:-0} - ${th0:-0} )) \
+              'BEGIN{printf "{\"k\":\"%s\",\"wall_s\":%.2f,\"cpu_s\":%.2f,\"cores_used\":%.2f,\"throttled_s\":%.2f}", n, r, u+s, (r>0?(u+s)/r:0), t/1e6}')
+            echo "$line" | tee -a "$OUT"
+          }
+          SH
+      - name: Build deps (cc, openssl)
+        continue-on-error: true
+        run: |
+          . /tmp/m.sh
+          need=""; command -v cc >/dev/null || need="build-essential"; command -v openssl >/dev/null || need="$need openssl"
+          if [ -n "$need" ]; then m apt_deps sudo bash -c "apt-get update -qq && apt-get install -y -qq $need pkg-config"; fi
+      - name: CPU microbench
+        continue-on-error: true
+        run: |
+          . /tmp/m.sh
+          m sha256_1core openssl speed -seconds 5 sha256
+          m sha256_allcores openssl speed -seconds 5 -multi "$(nproc)" sha256
+      - name: Disk + network
+        continue-on-error: true
+        run: |
+          . /tmp/m.sh
+          m disk_1g_write dd if=/dev/zero of=./ddtest bs=1M count=1024 conv=fdatasync; rm -f ddtest
+          m net_go_tarball_73mb curl -fsSL -o /dev/null https://go.dev/dl/go1.23.2.linux-amd64.tar.gz
+      # ---- Go: gh CLI build ----
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.23', cache: false }
+      - name: Go build (cli/cli)
+        continue-on-error: true
+        run: |
+          . /tmp/m.sh
+          m go_clone git clone -q --depth 1 --branch v2.60.0 https://github.com/cli/cli.git /tmp/cli
+          cd /tmp/cli
+          m go_mod_download go mod download
+          m go_build go build -o /tmp/gh ./cmd/gh
+      # ---- Node: TypeScript project install + build ----
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - name: Node build (sindresorhus/got)
+        continue-on-error: true
+        run: |
+          . /tmp/m.sh
+          m node_clone git clone -q --depth 1 --branch v14.4.2 https://github.com/sindresorhus/got.git /tmp/got
+          cd /tmp/got
+          m npm_install npm install --no-audit --no-fund --ignore-scripts
+          m tsc_build bash -c 'npx tsc; [ $? -le 2 ]'  # type errors (exit 2) still emit
+          m node_cpu node -e 'let x=0;for(let i=0;i<3e8;i++){x=(x+i*i)%1000003}console.log(x)'
+      - name: Node memory-heavy (TypeScript compiler self-build)
+        continue-on-error: true
+        run: |
+          . /tmp/m.sh
+          m ts_clone git clone -q --depth 1 --branch v5.6.3 https://github.com/microsoft/TypeScript.git /tmp/ts
+          cd /tmp/ts
+          m ts_npm_ci npm ci --no-audit --no-fund
+          # Type-check + emit the TypeScript compiler project: a real 1.5-3 GB tsc workload.
+          m ts_selfbuild bash -c 'node --max-old-space-size=6144 node_modules/typescript/lib/tsc.js -b src/compiler --extendedDiagnostics; [ $? -le 2 ]'
+          mem=$(awk '/Memory used:/{gsub("K","",$3); print int($3/1024)}' /tmp/m.log | sort -n | tail -1)
+          printf '{"k":"ts_selfbuild_heap_mb","v":%s}\n' "${mem:-null}" | tee -a "$OUT"
+      - name: Node memory-heavy (synthetic 3 GB heap + GC)
+        continue-on-error: true
+        run: |
+          . /tmp/m.sh
+          cat > /tmp/heap.js <<'JS'
+          // Grow a retained object graph to ~3 GB in 256 MB steps, then churn it to stress GC.
+          const t0 = Date.now(), keep = []; let peak = 0;
+          for (let step = 0; step < 8; step++) {
+            const chunk = [];
+            for (let i = 0; i < 1_000_000; i++) chunk.push({ id: i, s: 'x'.repeat(64) + i, a: [i, i + 1, i + 2] });
+            keep.push(chunk);
+            peak = Math.max(peak, process.memoryUsage().rss);
+          }
+          for (let r = 0; r < 4; r++) { keep.shift(); keep.push(Array.from({ length: 1_000_000 }, (_, i) => ({ i, s: 'y' + i }))); }
+          peak = Math.max(peak, process.memoryUsage().rss);
+          console.log(JSON.stringify({ k: 'heap3g_result', peak_rss_mb: Math.round(peak / 2**20), ms: Date.now() - t0 }));
+          JS
+          m heap3g node --max-old-space-size=6144 /tmp/heap.js
+          tail -1 /tmp/m.log | tee -a "$OUT"
+          echo "cgroup memory.peak: $(cat /sys/fs/cgroup/memory.peak 2>/dev/null || echo n/a)"
+          printf '{"k":"cgroup_mem_peak_mb","v":%s}\n' "$(( $(cat /sys/fs/cgroup/memory.peak 2>/dev/null || echo 0) / 1048576 ))" >> "$OUT"
+          echo "OOM events: $(grep -h oom_kill /sys/fs/cgroup/memory.events 2>/dev/null || echo n/a)"
+      # ---- Rust: ripgrep release build (multi-core heavy) ----
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Rust build (BurntSushi/ripgrep)
+        continue-on-error: true
+        run: |
+          . /tmp/m.sh
+          m rust_clone git clone -q --depth 1 --branch 14.1.1 https://github.com/BurntSushi/ripgrep.git /tmp/rg
+          cd /tmp/rg
+          m cargo_fetch cargo fetch
+          m cargo_build_release cargo build --release --offline
+          cargo clean -q
+          m cargo_build_debug cargo build --offline
+      - name: Summary
+        if: always()
+        run: |
+          echo "### ${{ matrix.provider }}" >> "$GITHUB_STEP_SUMMARY"
+          sed 's/^/    /' "$OUT" >> "$GITHUB_STEP_SUMMARY"
+          sed 's/^/BENCH /' "$OUT"
