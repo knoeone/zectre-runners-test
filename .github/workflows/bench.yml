@@ -30,7 +30,7 @@ jobs:
           cache: false
       - name: Benchmark
         run: |
-          t() { local s=$(date +%s.%N); "$@" >/dev/null 2>&1; echo "$(date +%s.%N) - $s" | bc; }
+          t() { local s=$(date +%s.%N); "$@" >/dev/null 2>&1; awk -v a="$s" -v b="$(date +%s.%N)" "BEGIN{printf \"%.2f\", b-a}"; }
           SHA1=$(openssl speed -seconds 5 sha256 2>/dev/null | awk '/^sha256/{print $NF}')
           SHAN=$(openssl speed -seconds 5 -multi $(nproc) sha256 2>/dev/null | awk '/^sha256/{print $NF}')
           DISK=$(t dd if=/dev/zero of=./ddtest bs=1M count=1024 conv=fdatasync); rm -f ddtest
