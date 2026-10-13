@@ -16,7 +16,8 @@ hdr=$($REAL config --get-regexp '^http\..*\.extraheader$' 2>/dev/null | head -1 
 (
   flock -w 300 9 || exit 0
   [ -d "$mirror" ] || $REAL init -q --bare "$mirror"
-  ${hdr:+$REAL -c "http.extraheader=$hdr"} ${hdr:-$REAL} -C "$mirror" fetch -q --prune --no-tags "$url" '+refs/heads/*:refs/heads/*' 2>/dev/null \
+  auth=(); [ -n "$hdr" ] && auth=(-c "http.extraheader=$hdr")
+  $REAL "${auth[@]}" -C "$mirror" fetch -q --prune --no-tags "$url" '+refs/heads/*:refs/heads/*' 2>/dev/null \
     || true
 ) 9>"$mirror.lock"
 grep -qx "$mirror/objects" "$gitdir/objects/info/alternates" 2>/dev/null || echo "$mirror/objects" >> "$gitdir/objects/info/alternates"
