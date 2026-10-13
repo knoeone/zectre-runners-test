@@ -1,0 +1,23 @@
+#!/bin/bash
+# git wrapper: before a fetch in a repo whose origin is github.com/<owner>/<repo>, refresh a
+# per-tenant bare mirror on the cache volume and use it as an alternate object store, so the
+# fetch only transfers what the mirror lacks. Everything else goes straight to the real git.
+REAL=/usr/bin/git
+CACHE=${ZECTRE_GIT_CACHE:-/cache/git}
+if [ "$1" != fetch ] && ! { [ "$1" = -c ] && printf '%s\n' "$@" | grep -qx fetch; }; then exec $REAL "$@"; fi
+url=$($REAL config --get remote.origin.url 2>/dev/null)
+case "$url" in https://github.com/*) ;; *) exec $REAL "$@" ;; esac
+[ -d "$CACHE" ] && [ -w "$CACHE" ] || exec $REAL "$@"
+slug=${url#https://github.com/}; slug=${slug%.git}
+mirror="$CACHE/$slug.git"; gitdir=$($REAL rev-parse --git-dir 2>/dev/null) || exec $REAL "$@"
+mkdir -p "$(dirname "$mirror")"
+# Reuse the job's checkout credentials (actions/checkout stores an extraheader in local config).
+hdr=$($REAL config --get-regexp '^http\..*\.extraheader$' 2>/dev/null | head -1 | cut -d' ' -f2-)
+(
+  flock -w 300 9 || exit 0
+  [ -d "$mirror" ] || $REAL init -q --bare "$mirror"
+  ${hdr:+$REAL -c "http.extraheader=$hdr"} ${hdr:-$REAL} -C "$mirror" fetch -q --prune --no-tags "$url" '+refs/heads/*:refs/heads/*' 2>/dev/null \
+    || true
+) 9>"$mirror.lock"
+grep -qx "$mirror/objects" "$gitdir/objects/info/alternates" 2>/dev/null || echo "$mirror/objects" >> "$gitdir/objects/info/alternates"
+exec $REAL "$@"
