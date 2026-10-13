@@ -65,6 +65,7 @@ jobs:
       - uses: actions/setup-go@v5
         with: { go-version: '1.23', cache: false }
       - name: Go build (cli/cli)
+        continue-on-error: true
         run: |
           . /tmp/m.sh
           m go_clone git clone -q --depth 1 --branch v2.60.0 https://github.com/cli/cli.git /tmp/cli
@@ -75,6 +76,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: '22' }
       - name: Node build (sindresorhus/got)
+        continue-on-error: true
         run: |
           . /tmp/m.sh
           m node_clone git clone -q --depth 1 --branch v14.4.2 https://github.com/sindresorhus/got.git /tmp/got
@@ -83,6 +85,7 @@ jobs:
           m tsc_build npx tsc
           m node_cpu node -e 'let x=0;for(let i=0;i<3e8;i++){x=(x+i*i)%1000003}console.log(x)'
       - name: Node memory-heavy (TypeScript compiler self-build)
+        continue-on-error: true
         run: |
           . /tmp/m.sh
           m ts_clone git clone -q --depth 1 --branch v5.6.3 https://github.com/microsoft/TypeScript.git /tmp/ts
@@ -93,6 +96,7 @@ jobs:
           mem=$(awk '/Memory used:/{gsub("K","",$3); print int($3/1024)}' /tmp/m.log | sort -n | tail -1)
           printf '{"k":"ts_selfbuild_heap_mb","v":%s}\n' "${mem:-null}" | tee -a "$OUT"
       - name: Node memory-heavy (synthetic 3 GB heap + GC)
+        continue-on-error: true
         run: |
           . /tmp/m.sh
           cat > /tmp/heap.js <<'JS'
@@ -116,6 +120,7 @@ jobs:
       # ---- Rust: ripgrep release build (multi-core heavy) ----
       - uses: dtolnay/rust-toolchain@stable
       - name: Rust build (BurntSushi/ripgrep)
+        continue-on-error: true
         run: |
           . /tmp/m.sh
           m rust_clone git clone -q --depth 1 --branch 14.1.1 https://github.com/BurntSushi/ripgrep.git /tmp/rg
