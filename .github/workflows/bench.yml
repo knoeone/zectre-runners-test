@@ -1,0 +1,46 @@
+name: runner-bench
+on:
+  workflow_dispatch:
+jobs:
+  bench:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - provider: github
+            runs_on: '["ubuntu-latest"]'
+          - provider: blacksmith
+            runs_on: '["blacksmith-2vcpu-ubuntu-2404"]'
+          - provider: zectre
+            runs_on: '["self-hosted","zectre"]'
+    runs-on: ${{ fromJSON(matrix.runs_on) }}
+    name: bench-${{ matrix.provider }}
+    steps:
+      - name: System info
+        run: |
+          echo "provider=${{ matrix.provider }} runner=$RUNNER_NAME"
+          uname -r; nproc; free -m; df -h . | tail -1
+          grep -m1 "model name" /proc/cpuinfo || true
+      - name: Tools
+        run: |
+          command -v openssl >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq openssl >/dev/null)
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: false
+      - name: Benchmark
+        run: |
+          t() { local s=$(date +%s.%N); "$@" >/dev/null 2>&1; echo "$(date +%s.%N) - $s" | bc; }
+          SHA1=$(openssl speed -seconds 5 sha256 2>/dev/null | awk '/^sha256/{print $NF}')
+          SHAN=$(openssl speed -seconds 5 -multi $(nproc) sha256 2>/dev/null | awk '/^sha256/{print $NF}')
+          DISK=$(t dd if=/dev/zero of=./ddtest bs=1M count=1024 conv=fdatasync); rm -f ddtest
+          NET=$(t curl -fsSL -o /dev/null "https://speed.cloudflare.com/__down?bytes=100000000")
+          CLONE=$(t git clone -q --depth 1 --branch v2.60.0 https://github.com/cli/cli.git cli)
+          cd cli
+          MOD=$(t go mod download)
+          BUILD=$(t go build -o /tmp/gh ./cmd/gh)
+          REBUILD=$(t go build -a -o /tmp/gh2 ./cmd/gh)
+          J=$(printf '{"provider":"%s","nproc":%s,"mem_mb":%s,"sha256_1core_kBps":"%s","sha256_all_kBps":"%s","disk_1g_s":%s,"net_100mb_s":%s,"clone_s":%s,"go_mod_s":%s,"go_build_s":%s,"go_rebuild_all_s":%s}' \
+            "${{ matrix.provider }}" "$(nproc)" "$(free -m | awk '/Mem:/{print $2}')" "$SHA1" "$SHAN" "$DISK" "$NET" "$CLONE" "$MOD" "$BUILD" "$REBUILD")
+          echo "BENCH $J"
+          echo "\`$J\`" >> "$GITHUB_STEP_SUMMARY"
