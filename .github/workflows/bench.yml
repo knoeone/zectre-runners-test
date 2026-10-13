@@ -47,20 +47,23 @@ jobs:
           }
           SH
       - name: Build deps (cc, openssl)
+        continue-on-error: true
         run: |
           . /tmp/m.sh
           need=""; command -v cc >/dev/null || need="build-essential"; command -v openssl >/dev/null || need="$need openssl"
           if [ -n "$need" ]; then m apt_deps sudo bash -c "apt-get update -qq && apt-get install -y -qq $need pkg-config"; fi
       - name: CPU microbench
+        continue-on-error: true
         run: |
           . /tmp/m.sh
           m sha256_1core openssl speed -seconds 5 sha256
           m sha256_allcores openssl speed -seconds 5 -multi "$(nproc)" sha256
       - name: Disk + network
+        continue-on-error: true
         run: |
           . /tmp/m.sh
           m disk_1g_write dd if=/dev/zero of=./ddtest bs=1M count=1024 conv=fdatasync; rm -f ddtest
-          m net_100mb curl -fsSL -o /dev/null "https://speed.cloudflare.com/__down?bytes=100000000"
+          m net_go_tarball_73mb curl -fsSL -o /dev/null https://go.dev/dl/go1.23.2.linux-amd64.tar.gz
       # ---- Go: gh CLI build ----
       - uses: actions/setup-go@v5
         with: { go-version: '1.23', cache: false }
