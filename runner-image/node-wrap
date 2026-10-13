@@ -1,0 +1,8 @@
+#!/bin/bash
+# Wraps the runner's bundled node (used for JS actions such as actions/cache and setup-node):
+# when the tenant's local Actions cache server is up, point the cache client at it. The server
+# forwards everything that isn't cache traffic (artifacts etc.) to GitHub's results service.
+if [ -n "$ZECTRE_CACHE_URL" ] && [ -n "$ACTIONS_RESULTS_URL" ] && [ "$ACTIONS_RESULTS_URL" != "$ZECTRE_CACHE_URL" ]; then
+  export ACTIONS_RESULTS_URL="$ZECTRE_CACHE_URL"
+fi
+exec "$(dirname "$0")/node.real" "$@"
