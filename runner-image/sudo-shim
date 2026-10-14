@@ -1,0 +1,22 @@
+#!/bin/bash
+# Isolated runners run with no-new-privileges, so real sudo cannot work. Workflows written for
+# GitHub-hosted runners often `sudo apt-get install` tools; when every requested package is
+# already baked into this image, succeed (nothing to do). Anything else fails, loudly.
+args=("$@"); while [ "${args[0]:-}" != "" ] && [[ "${args[0]}" == -* ]]; do args=("${args[@]:1}"); done
+if [ "${args[0]:-}" = "apt-get" ] || [ "${args[0]:-}" = "apt" ]; then
+  case "${args[1]:-}" in
+    update) exit 0 ;;
+    install)
+      missing=()
+      for p in "${args[@]:2}"; do
+        [[ "$p" == -* ]] && continue
+        p="${p%%=*}"
+        dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q "install ok installed" || missing+=("$p")
+      done
+      [ ${#missing[@]} -eq 0 ] && exit 0
+      echo "sudo is not available on Zectre runners; not installed in the runner image: ${missing[*]}" >&2
+      exit 1 ;;
+  esac
+fi
+echo "sudo is not available on Zectre runners (isolated: no-new-privileges): sudo $*" >&2
+exit 1
