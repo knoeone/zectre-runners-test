@@ -33,6 +33,18 @@ RUN cd /tmp && npm i -s --no-save better-sqlite3@$(node -p "require('/opt/cache-
  && rm -rf /tmp/node_modules /root/.npm \
  && sed -i 's/\x41\x00\x43\x00\x54\x00\x49\x00\x4F\x00\x4E\x00\x53\x00\x5F\x00\x52\x00\x45\x00\x53\x00\x55\x00\x4C\x00\x54\x00\x53\x00\x5F\x00\x55\x00\x52\x00\x4C\x00/\x41\x00\x43\x00\x54\x00\x49\x00\x4F\x00\x4E\x00\x53\x00\x5F\x00\x52\x00\x45\x00\x53\x00\x55\x00\x4C\x00\x54\x00\x53\x00\x5F\x00\x4F\x00\x52\x00\x4C\x00/g' /home/runner/bin/Runner.Worker.dll \
  && grep -c "A.C.T.I.O.N.S._.R.E.S.U.L.T.S._.O.R.L" -a /home/runner/bin/Runner.Worker.dll
+# sccache: the real binary in /opt/sccache, and a wrapper pre-seeded in the tool cache for every
+# version listed, so sccache-action finds it there (see sccache-wrap).
+ARG SCCACHE_VERSIONS="0.18.0 0.17.0 0.16.0 0.15.0 0.14.0 0.13.0 0.12.0 0.11.0 0.10.0"
+COPY sccache-wrap /usr/local/lib/zectre-sccache-wrap
+RUN v=$(echo $SCCACHE_VERSIONS | cut -d' ' -f1) && mkdir -p /opt/sccache \
+ && curl -fsSL https://github.com/mozilla/sccache/releases/download/v$v/sccache-v$v-x86_64-unknown-linux-musl.tar.gz \
+    | tar -xz -C /opt/sccache --strip-components=1 sccache-v$v-x86_64-unknown-linux-musl/sccache \
+ && chmod 755 /opt/sccache/sccache && /opt/sccache/sccache --version \
+ && for ver in $SCCACHE_VERSIONS; do d=/opt/hostedtoolcache/sccache/$ver/x64; mkdir -p $d \
+      && install -m755 /usr/local/lib/zectre-sccache-wrap $d/sccache && touch /opt/hostedtoolcache/sccache/$ver/x64.complete; done \
+ && chown -R runner:runner /opt/hostedtoolcache
+ENV AGENT_TOOLSDIRECTORY=/opt/hostedtoolcache RUNNER_TOOL_CACHE=/opt/hostedtoolcache
 USER runner
 ENTRYPOINT ["/usr/local/bin/zectre-cache-env"]
 RUN node --version && go version && cargo --version && cc --version | head -1
