@@ -2,6 +2,10 @@
 # Point package/compile caches at the per-tenant cache volume (/cache) when it is mounted.
 if [ -d /cache ] && [ -w /cache ]; then
   mkdir -p /cache/pnpm-store /cache/npm /cache/cargo/registry /cache/cargo/git /cache/sccache /cache/xdg /cache/git /cache/go/mod /cache/go/build /cache/puppeteer /cache/playwright
+  # `cargo install` tools (cargo-xwin, sccache, …) persist per tenant: a reinstall of the same
+  # version is a no-op instead of a full compile on every job.
+  mkdir -p /cache/cargo/install/bin
+  export CARGO_INSTALL_ROOT=/cache/cargo/install PATH="/cache/cargo/install/bin:$PATH"
   for d in registry git; do rm -rf "$HOME/.cargo/$d"; ln -sfn "/cache/cargo/$d" "$HOME/.cargo/$d"; done
   export npm_config_store_dir=/cache/pnpm-store pnpm_config_store_dir=/cache/pnpm-store npm_config_cache=/cache/npm SCCACHE_DIR=/cache/sccache \
          XDG_CACHE_HOME=/cache/xdg GOMODCACHE=/cache/go/mod GOCACHE=/cache/go/build \
