@@ -34,7 +34,10 @@ RUN cd /tmp && npm i -s --no-save better-sqlite3@$(node -p "require('/opt/cache-
  && sed -i 's/\x41\x00\x43\x00\x54\x00\x49\x00\x4F\x00\x4E\x00\x53\x00\x5F\x00\x52\x00\x45\x00\x53\x00\x55\x00\x4C\x00\x54\x00\x53\x00\x5F\x00\x55\x00\x52\x00\x4C\x00/\x41\x00\x43\x00\x54\x00\x49\x00\x4F\x00\x4E\x00\x53\x00\x5F\x00\x52\x00\x45\x00\x53\x00\x55\x00\x4C\x00\x54\x00\x53\x00\x5F\x00\x4F\x00\x52\x00\x4C\x00/g' /home/runner/bin/Runner.Worker.dll \
  && grep -c "A.C.T.I.O.N.S._.R.E.S.U.L.T.S._.O.R.L" -a /home/runner/bin/Runner.Worker.dll
 # Cross-compile toolchain jobs commonly apt-get (e.g. Rust to Windows via cargo-xwin).
-RUN apt-get update && apt-get install -y --no-install-recommends clang lld llvm && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends clang lld llvm \
+ # Linux desktop (Tauri) build deps, as GitHub-hosted runners provide them via apt.
+ dpkg-dev libayatana-appindicator3-dev libgtk-3-dev librsvg2-dev libssl-dev libwebkit2gtk-4.1-dev libxdo-dev patchelf \
+ && rm -rf /var/lib/apt/lists/*
 # sudo cannot work under no-new-privileges; the shim succeeds for apt installs of baked packages.
 COPY sudo-shim /usr/local/bin/sudo
 # Replace sudo itself: the runner's PATH puts /usr/bin before /usr/local/bin.
