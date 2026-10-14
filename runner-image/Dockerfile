@@ -37,7 +37,8 @@ RUN cd /tmp && npm i -s --no-save better-sqlite3@$(node -p "require('/opt/cache-
 RUN apt-get update && apt-get install -y --no-install-recommends clang lld llvm && rm -rf /var/lib/apt/lists/*
 # sudo cannot work under no-new-privileges; the shim succeeds for apt installs of baked packages.
 COPY sudo-shim /usr/local/bin/sudo
-RUN chmod 755 /usr/local/bin/sudo
+# Replace sudo itself: the runner's PATH puts /usr/bin before /usr/local/bin.
+RUN chmod 755 /usr/local/bin/sudo && mv /usr/bin/sudo /usr/bin/sudo.real && ln -s /usr/local/bin/sudo /usr/bin/sudo
 # System libraries headless Chrome/Chromium need (puppeteer, playwright), as on GitHub's runners.
 RUN npx -y playwright@1.49.1 install-deps chromium && rm -rf /var/lib/apt/lists/* /root/.npm
 # sccache: the real binary in /opt/sccache, and a wrapper pre-seeded in the tool cache for every
