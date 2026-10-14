@@ -1,0 +1,9 @@
+#!/bin/sh
+# Pre-seeded in the runner tool cache as sccache <version> (mozilla-actions/sccache-action reuses a
+# cached version instead of downloading). With the tenant's /cache volume mounted, use it as a local
+# disk cache: the GitHub-cache (ghac) backend cannot write through the local Actions cache server.
+if [ -d /cache ] && [ -w /cache ]; then
+  mkdir -p /cache/sccache
+  export SCCACHE_GHA_ENABLED=false SCCACHE_DIR=/cache/sccache SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE:-20G}"
+fi
+exec /opt/sccache/sccache "$@"
