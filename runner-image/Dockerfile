@@ -44,6 +44,11 @@ COPY sudo-shim /usr/local/bin/sudo
 RUN chmod 755 /usr/local/bin/sudo && mv /usr/bin/sudo /usr/bin/sudo.real && ln -s /usr/local/bin/sudo /usr/bin/sudo
 # System libraries headless Chrome/Chromium need (puppeteer, playwright), as on GitHub's runners.
 RUN npx -y playwright@1.49.1 install-deps chromium && rm -rf /var/lib/apt/lists/* /root/.npm
+# GitHub CLI, as on GitHub's hosted runners (release workflows call `gh`).
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && chmod 644 /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update && apt-get install -y --no-install-recommends gh && rm -rf /var/lib/apt/lists/*
 # sccache: the real binary in /opt/sccache, and a wrapper pre-seeded in the tool cache for every
 # version listed, so sccache-action finds it there (see sccache-wrap).
 ARG SCCACHE_VERSIONS="0.18.0 0.17.0 0.16.0 0.15.0 0.14.0 0.13.0 0.12.0 0.11.0 0.10.0"
@@ -58,4 +63,4 @@ RUN v=$(echo $SCCACHE_VERSIONS | cut -d' ' -f1) && mkdir -p /opt/sccache \
 ENV AGENT_TOOLSDIRECTORY=/opt/hostedtoolcache RUNNER_TOOL_CACHE=/opt/hostedtoolcache
 USER runner
 ENTRYPOINT ["/usr/local/bin/zectre-cache-env"]
-RUN node --version && go version && cargo --version && cc --version | head -1
+RUN node --version && go version && cargo --version && cc --version | head -1 && gh --version | head -1
