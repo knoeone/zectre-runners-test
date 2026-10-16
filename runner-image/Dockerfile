@@ -3,6 +3,8 @@
 FROM ghcr.io/falcondev-oss/github-actions-cache-server:latest AS cacheserver
 
 FROM ghcr.io/actions/actions-runner:latest
+# Kept by the nodes' daily image cleanup (zectre-prune): runners must start without a pull.
+LABEL zectre.keep=true
 USER root
 ARG NODE_MAJOR=22
 ARG GO_VERSION=1.23.2
@@ -60,7 +62,19 @@ RUN v=$(echo $SCCACHE_VERSIONS | cut -d' ' -f1) && mkdir -p /opt/sccache \
  && for ver in $SCCACHE_VERSIONS; do d=/opt/hostedtoolcache/sccache/$ver/x64; mkdir -p $d \
       && install -m755 /usr/local/lib/zectre-sccache-wrap $d/sccache && touch /opt/hostedtoolcache/sccache/$ver/x64.complete; done \
  && chown -R runner:runner /opt/hostedtoolcache
+# Node in the tool cache, as on GitHub's runners: actions/setup-node finds a matching version here
+# instead of downloading it on every job (~10 s each). Latest of each major the workflows use.
+ARG NODE_TOOLCACHE_MAJORS="22 24 26"
+RUN idx=$(curl -fsSL https://nodejs.org/dist/index.json) \
+ && for m in $NODE_TOOLCACHE_MAJORS; do \
+      v=$(echo "$idx" | jq -r --arg p "v$m." '[.[]|select(.version|startswith($p))][0].version' | sed 's/^v//'); \
+      [ -n "$v" ] && [ "$v" != null ] || { echo "no Node $m release"; exit 1; }; \
+      d=/opt/hostedtoolcache/node/$v/x64; mkdir -p $d \
+      && curl -fsSL https://nodejs.org/dist/v$v/node-v$v-linux-x64.tar.xz | tar -xJ -C $d --strip-components=1 \
+      && touch /opt/hostedtoolcache/node/$v/x64.complete && echo "toolcache node $v"; \
+    done \
+ && chown -R runner:runner /opt/hostedtoolcache/node
 ENV AGENT_TOOLSDIRECTORY=/opt/hostedtoolcache RUNNER_TOOL_CACHE=/opt/hostedtoolcache
 USER runner
 ENTRYPOINT ["/usr/local/bin/zectre-cache-env"]
-RUN node --version && go version && cargo --version && cc --version | head -1 && gh --version | head -1
+RUN node --version && go version && cargo --version && cc --version | head -1 && gh --version | head -1 && ls /opt/hostedtoolcache/node
